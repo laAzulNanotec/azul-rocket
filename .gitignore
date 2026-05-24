@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# MATLAB
+*.asv
+*.m~
+slprj/
+
+# Outputs
+plots/
+output/
+*.csv
+*.stl
+*.dxf
+*.iges
+*.step
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
