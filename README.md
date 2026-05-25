@@ -104,7 +104,7 @@ The interactive app gives you sliders for latitude, peak sun hours, albedo, cany
 
 ## Reference output
 
-After running `run_full_study(site='peten')` you get five publication-ready figures:
+After running `python run.py` you get five publication-ready figures:
 
 1. **All vault shapes** — cross-sections comparing semicircle, low arc 120°, raised 240°, gothic pointed, and catenary  
 2. **Hourly harvest curve** — power by face throughout the day  
@@ -112,14 +112,41 @@ After running `run_full_study(site='peten')` you get five publication-ready figu
 4. **Site comparison** — Petén, Kohala, Austin, California for the same vault  
 5. **3D trailer rendering** — full perspective with ribs, stringers, panels  
 
-Sample numbers at Petén (16.5°N, 0.45 albedo, 120° low arc, 8 arc + 2 north panels):
+Sample numbers at Petén (16.5°N, 0.45 albedo, 120° low arc, 16 × Lensun 180W 24V in 8 series pairs):
 
 | Metric | Value |
 |--------|-------|
-| Peak power | 3.06 kW |
-| Daily harvest | 26.6 kWh |
-| Annual yield | 9.7 MWh |
+| Peak power | 2.76 kW |
+| Daily harvest | 23.4 kWh |
+| Annual yield | 8.5 MWh |
+| Roof coverage | 63% |
 | Best vault shape | Low arc 120° |
+
+> The model computes harvest with panels treated as flat. **The actual 3D placement** — panel tilt on the arc, edge clearances, conduit routing, CFD-coupled shading — is done in Autodesk Inventor. This module gives you the headline kWh number; Inventor gives you the buildable layout.
+
+## Panel selection
+
+The harvest model now includes a panel catalog with realistic dimensions and computes how many actually fit on the 7.5 × 24 ft roof:
+
+```bash
+python run.py --compare-panels      # see all options
+```
+
+| Panel | Fits | Peak | Daily kWh | Topology |
+|-------|------|------|-----------|----------|
+| **Lensun 180W 24V** *(default)* | 16 | 2.88 kW | 23.4 | 8 series pairs → 48V bus |
+| Lensun 150W 12V | 20 | 3.00 kW | 24.4 | 5 series quads → 48V bus |
+| Lensun 100W 12V | 28 | 2.80 kW | 22.5 | 7 series quads → 48V bus |
+| Lensun 400W 48V *(original)* | 6 | 2.40 kW | 20.2 | direct to 48V bus, parallel |
+
+The **24V series-pair topology** is the sweet spot: smaller panels fit more densely on the curved arc, conform better to the surface, and tolerate partial shade — while two panels in series produce 48V at the same current as one 48V panel, so the Sol Arc bus and MPPT topology are unchanged.
+
+Try a different panel:
+
+```bash
+python run.py --panel lensun_150_12
+python run.py --panel lensun_400_48 --site austin
+```
 
 ---
 

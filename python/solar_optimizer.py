@@ -69,12 +69,149 @@ SHAPES = {
                   'desc': 'pure compression, zero bending'},
 }
 
-# Panel: Lensun 400W 48V
-PANEL_W = 1825      # mm
-PANEL_H = 1142      # mm
-PANEL_T = 3         # mm
-PANEL_KG = 7
-P_PANEL = 400       # W
+# ────────────────────────────────────────────────────────────────────────
+# PANEL CATALOG — common flexible/rigid solar panels
+# ────────────────────────────────────────────────────────────────────────
+# Each entry: rated W, length mm, width mm, system V, weight kg, USD cost
+PANELS = {
+    'lensun_400_48': {
+        'name': 'Lensun 400W 48V flexible',
+        'P': 400, 'length': 1825, 'width': 1142, 'V': 48, 'kg': 7.0, 'cost': 580,
+    },
+    'lensun_200_24': {
+        'name': 'Lensun 200W 24V flexible',
+        'P': 200, 'length': 1500, 'width': 670, 'V': 24, 'kg': 3.8, 'cost': 290,
+    },
+    'lensun_180_24': {
+        'name': 'Lensun 180W 24V flexible',
+        'P': 180, 'length': 1480, 'width': 540, 'V': 24, 'kg': 3.0, 'cost': 250,
+    },
+    'lensun_150_12': {
+        'name': 'Lensun 150W 12V flexible',
+        'P': 150, 'length': 1180, 'width': 540, 'V': 12, 'kg': 2.5, 'cost': 200,
+    },
+    'lensun_100_12': {
+        'name': 'Lensun 100W 12V flexible',
+        'P': 100, 'length':  880, 'width': 540, 'V': 12, 'kg': 1.8, 'cost': 130,
+    },
+    'renogy_175_12': {
+        'name': 'Renogy 175W 12V flexible',
+        'P': 175, 'length': 1455, 'width': 550, 'V': 12, 'kg': 2.6, 'cost': 220,
+    },
+}
+
+# Default panel for backward compatibility — the recommended 180W 24V
+DEFAULT_PANEL = 'lensun_180_24'
+
+
+def panel_layout(panel_key='lensun_180_24', width_ft=7.5, length_ft=24,
+                 shape='low120', gap_mm=80, edge_margin_mm=100):
+    """
+    Compute how many panels fit on the trailer roof, treating the developed
+    arc surface as a flat rectangle. The actual 3D placement is done in
+    Inventor; this function just gives the headline count and power.
+
+    Returns dict with:
+      n_panels      total panels that fit
+      P_array_kW    peak DC power (n_panels * panel watts / 1000)
+      coverage_pct  fraction of roof covered by panels
+      orientation   'length-aligned' or 'width-aligned'
+      n_pairs       suggested series pairs to feed 48V bus from 24V panels
+                    (None for 48V panels; quads of 4 for 12V panels)
+      bus_topology  string describing recommended wiring
+    """
+    panel = PANELS[panel_key]
+    p_len = panel['length']
+    p_wid = panel['width']
+
+    # Roof developed area
+    geom = compute_geometry(width_ft=width_ft, shape=shape)
+    arc_dev = geom['arc_len']           # mm — developed arc length (the "width" of the roof)
+    L_mm = length_ft * FT2MM            # trailer length
+
+    usable_arc = max(arc_dev - 2 * edge_margin_mm, 0)
+    usable_L   = max(L_mm    - 2 * edge_margin_mm, 0)
+
+    # Try length-aligned (panel long axis along trailer length)
+    rows_LA = int((usable_arc + gap_mm) // (p_wid + gap_mm))
+    cols_LA = int((usable_L   + gap_mm) // (p_len + gap_mm))
+    n_LA = rows_LA * cols_LA
+
+    # Try width-aligned (panel long axis along arc)
+    rows_WA = int((usable_arc + gap_mm) // (p_len + gap_mm))
+    cols_WA = int((usable_L   + gap_mm) // (p_wid + gap_mm))
+    n_WA = rows_WA * cols_WA
+
+    if n_LA >= n_WA:
+        n, rows, cols, orient = n_LA, rows_LA, cols_LA, 'length-aligned'
+    else:
+        n, rows, cols, orient = n_WA, rows_WA, cols_WA, 'width-aligned'
+
+    # Recommended series-pair topology for 48V Sol Arc bus
+    V = panel['V']
+    if V == 48:
+        n_pairs = None
+        n_used = n
+        bus_topology = f'{n} panels direct to 48V bus, parallel'
+    elif V == 24:
+        # series pairs → 48V
+        n_used = (n // 2) * 2
+        n_pairs = n_used // 2
+        bus_topology = f'{n_pairs} series pairs of 2 panels → 48V bus'
+    elif V == 12:
+        # series quads → 48V
+        n_used = (n // 4) * 4
+        n_pairs = n_used // 4
+        bus_topology = f'{n_pairs} series quads of 4 panels → 48V bus'
+    else:
+        n_used = n
+        n_pairs = None
+        bus_topology = f'{n} panels at {V}V — needs MPPT boost converter'
+
+    return {
+        'panel_key':    panel_key,
+        'panel_name':   panel['name'],
+        'panel_W':      panel['P'],
+        'panel_dims':   (p_len, p_wid),
+        'rows':         rows,
+        'cols':         cols,
+        'n_panels':     n_used,
+        'P_array_kW':   n_used * panel['P'] / 1000,
+        'coverage_pct': n_used * p_len * p_wid / 1e6 / (arc_dev * L_mm / 1e6) * 100,
+        'orientation':  orient,
+        'n_pairs':      n_pairs,
+        'bus_topology': bus_topology,
+        'array_cost':   n_used * panel['cost'],
+        'array_weight': n_used * panel['kg'],
+    }
+
+
+def compare_panels(width_ft=7.5, length_ft=24, shape='low120'):
+    """Quick comparison table of every panel in the catalog."""
+    rows = []
+    for key in PANELS:
+        layout = panel_layout(key, width_ft=width_ft,
+                               length_ft=length_ft, shape=shape)
+        rows.append(layout)
+
+    # Sort by peak power
+    rows.sort(key=lambda r: r['P_array_kW'], reverse=True)
+
+    print(f"\n{'Panel':<30} {'Fit':<6} {'kW':<8} {'Cover %':<8} {'$':<7} {'kg':<6} {'Topology'}")
+    print('-' * 90)
+    for r in rows:
+        print(f"{r['panel_name'][:30]:<30} {r['n_panels']:<6} "
+              f"{r['P_array_kW']:<8.2f} {r['coverage_pct']:<8.1f} "
+              f"${r['array_cost']:<6} {r['array_weight']:<6.1f} {r['bus_topology']}")
+    return rows
+
+
+# Backward-compatibility shims — point to the default panel
+PANEL_W = PANELS[DEFAULT_PANEL]['length']
+PANEL_H = PANELS[DEFAULT_PANEL]['width']
+PANEL_T = 3
+PANEL_KG = PANELS[DEFAULT_PANEL]['kg']
+P_PANEL = PANELS[DEFAULT_PANEL]['P']
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -164,11 +301,21 @@ def _arc_length(x, y):
 # SOLAR HARVEST MODEL
 # ────────────────────────────────────────────────────────────────────────
 def hourly_harvest(site='peten', shape='low120',
-                   n_long=4, n_row=2, n_north=2, derate=0.87,
-                   width_ft=7.5):
+                   panel=DEFAULT_PANEL,
+                   n_long=None, n_row=None, n_north=2,
+                   derate=0.87,
+                   width_ft=7.5, length_ft=24):
     """
     Numerical integration of hourly solar harvest by face.
-    Returns dict with hours, P_arc, P_north, totals.
+
+    Two ways to specify panel count:
+      1. panel='lensun_180_24' (default) — auto-fits panels from catalog
+         using panel_layout(). Most realistic.
+      2. n_long, n_row — explicit grid count (legacy; overrides auto-fit).
+
+    n_north = additional north-facing panels for canyon-albedo reflection.
+
+    Returns dict with hours, P_arc, P_north, layout info, totals.
     """
     s = SITES[site]
     lat = s['lat']
@@ -176,13 +323,28 @@ def hourly_harvest(site='peten', shape='low120',
     canyon = s['canyon']
 
     geom = compute_geometry(width_ft=width_ft, shape=shape)
-    # Vault factor depends on shape's angular distribution of panel mounting,
-    # NOT the developed arc length (since panel count is fixed = n_arc).
-    # 120° arc gives best E-W sweep; 180°+ have more total angle but redundant
-    # mid-day exposure; gothic has steep sides that miss low sun.
+
+    # ── Determine panel count ──────────────────────────────────────────
+    if n_long is not None and n_row is not None:
+        # Legacy explicit grid
+        n_arc = n_long * n_row
+        panel_W_rated = PANELS[panel]['P']
+        layout = {
+            'panel_name':   PANELS[panel]['name'],
+            'n_panels':     n_arc,
+            'P_array_kW':   n_arc * panel_W_rated / 1000,
+            'coverage_pct': None,
+            'bus_topology': f'{n_arc} × {PANELS[panel]["name"]} (manual grid)',
+        }
+    else:
+        # Auto-fit from catalog
+        layout = panel_layout(panel_key=panel, width_ft=width_ft,
+                               length_ft=length_ft, shape=shape)
+        n_arc = layout['n_panels']
+        panel_W_rated = PANELS[panel]['P']
 
     hours = np.arange(6, 18.001, 0.25)
-    hour_angle = (hours - 12) * 15   # degrees
+    hour_angle = (hours - 12) * 15
 
     # Solar declination (summer solstice for max-yield estimate)
     decl = 23.5
@@ -194,12 +356,7 @@ def hourly_harvest(site='peten', shape='low120',
         + np.cos(np.radians(lat)) * np.cos(np.radians(decl)) * np.cos(np.radians(hour_angle))
     )
 
-    # Shape-specific vault factor (panel-area normalized):
-    #   semi180:    classic baseline
-    #   low120:     +5% (best E-W sweep, chapter spec)
-    #   raised240:  -3% (redundant mid-day, harder mount)
-    #   gothic:     -2% (steep sides reduce low-sun capture)
-    #   catenary:   even (similar to low arc but no E-W boost)
+    # Shape-specific vault factor (panel-area normalized)
     shape_factor = {
         'semi180':   1.00,
         'low120':    1.05,
@@ -207,18 +364,16 @@ def hourly_harvest(site='peten', shape='low120',
         'gothic':    0.98,
         'catenary':  1.00,
     }
-    # Mild morning/afternoon E-W boost (panels on shoulders catch oblique sun)
     base_vault = 1.0 + 0.10 * np.abs(np.cos(np.radians(hour_angle)))
     vault_f = base_vault * shape_factor.get(shape, 1.0)
 
-    # Arc direct harvest
-    n_arc = n_long * n_row
-    P_arc = n_arc * P_PANEL * cos_inc * vault_f * derate / 1000  # kW
+    # Arc direct harvest — panels treated as flat (proper 3D layout in Inventor)
+    P_arc = n_arc * panel_W_rated * cos_inc * vault_f * derate / 1000  # kW
 
     # North face reflection (canyon albedo)
     refl_factor = albedo * np.sin(np.radians(canyon))
     diffuse_proxy = np.maximum(0, cos_inc * (1 - cos_inc))
-    P_north = n_north * P_PANEL * (0.08 + refl_factor * diffuse_proxy) * derate / 1000
+    P_north = n_north * panel_W_rated * (0.08 + refl_factor * diffuse_proxy) * derate / 1000
 
     P_arc[cos_inc <= 0] = 0
     P_north[cos_inc <= 0] = 0
@@ -231,10 +386,13 @@ def hourly_harvest(site='peten', shape='low120',
         'hours': hours, 'P_arc': P_arc, 'P_north': P_north,
         'E_day_arc': E_day_arc, 'E_day_north': E_day_north, 'E_day': E_day,
         'E_year': E_day * 365 / 1000,   # MWh
-        'P_peak_arc':   n_arc * P_PANEL * 1.1 * derate / 1000,   # kW
+        'P_peak_arc':   n_arc * panel_W_rated * 1.1 * derate / 1000,   # kW
         'n_arc':        n_arc,
         'n_north':      n_north,
         'n_total':      n_arc + n_north,
+        'panel':        panel,
+        'panel_W':      panel_W_rated,
+        'layout':       layout,
         'site':         s,
         'shape':        shape,
         'shape_name':   SHAPES[shape]['name'],
@@ -627,8 +785,8 @@ def plot_3d_dome(shape='low120', width_ft=7.5, floor_h_ft=4.0,
 # ────────────────────────────────────────────────────────────────────────
 # FULL STUDY — one call to generate everything
 # ────────────────────────────────────────────────────────────────────────
-def run_full_study(site='peten', width_ft=7.5, floor_h_ft=4.0,
-                    n_long=4, n_row=2, n_north=2, derate=0.87,
+def run_full_study(site='peten', width_ft=7.5, length_ft=24, floor_h_ft=4.0,
+                    panel=DEFAULT_PANEL, n_north=2, derate=0.87,
                     save_dir=None, show=True):
     """
     Generate the complete visual study for one site:
@@ -637,6 +795,11 @@ def run_full_study(site='peten', width_ft=7.5, floor_h_ft=4.0,
       3. Shape comparison bar chart
       4. Site comparison bar chart
       5. 3D rendering of the chapter-spec trailer
+
+    Panel layout is auto-computed by panel_layout() — the model treats panels
+    as flat for the harvest calculation. The actual 3D placement (panel tilt
+    on the arc, edge clearances, conduit routing) is done in Inventor; CFD
+    studies use the Inventor geometry, not this simplified flat model.
     """
     import os
     if save_dir:
@@ -647,7 +810,13 @@ def run_full_study(site='peten', width_ft=7.5, floor_h_ft=4.0,
 
     print(f'\n{"="*60}')
     print(f'SOLAR + GEOMETRY STUDY — {SITES[site]["name"]}')
+    print(f'Panel: {PANELS[panel]["name"]}')
     print(f'{"="*60}\n')
+
+    common_kw = dict(
+        panel=panel, n_north=n_north, derate=derate,
+        width_ft=width_ft, length_ft=length_ft,
+    )
 
     # 1. All dome shapes
     print('[1/5] Plotting all 5 vault shapes...')
@@ -656,24 +825,18 @@ def run_full_study(site='peten', width_ft=7.5, floor_h_ft=4.0,
 
     # 2. Hourly harvest for chapter spec
     print('\n[2/5] Hourly harvest — 120° low arc...')
-    plot_hourly_harvest(site=site, shape='low120',
-                         n_long=n_long, n_row=n_row, n_north=n_north,
-                         derate=derate, width_ft=width_ft,
+    plot_hourly_harvest(site=site, shape='low120', **common_kw,
                          save_path=_path('02_hourly_harvest_low120.png'),
                          show=show)
 
     # 3. Shape comparison
     print('\n[3/5] Shape comparison at site...')
-    plot_shape_comparison(site=site,
-                           n_long=n_long, n_row=n_row, n_north=n_north,
-                           derate=derate, width_ft=width_ft,
+    plot_shape_comparison(site=site, **common_kw,
                            save_path=_path('03_shape_comparison.png'), show=show)
 
     # 4. Site comparison
     print('\n[4/5] Site comparison for 120° low arc...')
-    plot_site_comparison(shape='low120',
-                          n_long=n_long, n_row=n_row, n_north=n_north,
-                          derate=derate, width_ft=width_ft,
+    plot_site_comparison(shape='low120', **common_kw,
                           save_path=_path('04_site_comparison.png'), show=show)
 
     # 5. 3D rendering
@@ -682,13 +845,17 @@ def run_full_study(site='peten', width_ft=7.5, floor_h_ft=4.0,
                   save_path=_path('05_3d_trailer.png'), show=show)
 
     # Final numerical summary
-    h = hourly_harvest(site=site, shape='low120',
-                       n_long=n_long, n_row=n_row, n_north=n_north,
-                       derate=derate, width_ft=width_ft)
+    h = hourly_harvest(site=site, shape='low120', **common_kw)
+    layout = h['layout']
     print(f'\n{"="*60}')
     print(f'CHAPTER 12 NUMBERS — {SITES[site]["name"]} · 120° low arc')
     print(f'{"="*60}')
-    print(f'  Panel config:  {h["n_arc"]} arc + {h["n_north"]} north = {h["n_total"]}')
+    print(f'  Panel:         {layout["panel_name"]}')
+    print(f'  Layout:        {layout.get("rows", "?")} rows × {layout.get("cols", "?")} cols '
+          f'({h["n_arc"]} arc + {h["n_north"]} north = {h["n_total"]} total)')
+    if layout.get("coverage_pct") is not None:
+        print(f'  Roof coverage: {layout["coverage_pct"]:.1f}%')
+    print(f'  Bus topology:  {layout["bus_topology"]}')
     print(f'  Peak power:    {h["P_peak_arc"]:.2f} kW')
     print(f'  Daily harvest: {h["E_day"]:.2f} kWh')
     print(f'    arc direct:  {h["E_day_arc"]:.2f} kWh')
